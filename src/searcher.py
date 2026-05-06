@@ -1,58 +1,115 @@
 import requests
-from bs4 import BeautifulSoup
 import time
-import random
-from datetime import datetime, timedelta
+import os
+from datetime import datetime
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+SERPER_API_KEY = os.environ["SERPER_API_KEY"]
 
-KEYWORDS = [
-    "医院 法律顾问 招标",
-    "医院 法务 招标",
-    "卫生健康委 法律服务 采购",
-    "医疗机构 律师事务所 招标",
-    "医院 法律服务 政府采购",
+# 搜索关键词 - 覆盖江浙沪皖地区医院法务招标
+QUERIES = [
+    "江苏 医院 法律顾问 招标 2026",
+    "浙江 医院 法律顾问 招标 2026",
+    "上海 医院 法律顾问 招标 2026",
+    "安徽 医院 法律顾问 招标 2026",
+    "江苏 卫健委 法律服务 采购 2026",
+    "浙江 卫健委 法律服务 采购 2026",
+    "上海 卫生健康委 法律服务 招标 2026",
+    "安徽 卫健委 法律服务 采购 2026",
+    "江苏 三级医院 法务 招标公告 2026",
+    "浙江 三级医院 法务 招标公告 2026",
+    "site:ccgp.gov.cn 医院 法律顾问 江苏",
+    "site:ccgp.gov.cn 医院 法律顾问 浙江",
+    "site:ccgp.gov.cn 医院 法律顾问 上海",
+    "site:ccgp.gov.cn 医院 法律顾问 安徽",
+    "site:zfcg.czt.zj.gov.cn 医院 法律服务",
+    "site:ggzy.江苏 医院 法律顾问",
 ]
 
-def search_ccgp(keyword):
+# 重点关注的网站域名（用于标注来源）
+SOURCE_MAP = {
+    "ccgp.gov.cn": "中国政府采购网",
+    "zfcg.czt.zj.gov.cn": "浙江政府采购网",
+    "js.gov.cn": "江苏政府网",
+    "sh.gov.cn": "上海政府网",
+    "ah.gov.cn": "安徽政府网",
+    "ggzy": "公共资源交易平台",
+    "bidcenter": "招标投标平台",
+    "hospital": "医院官网",
+    "yy120": "医院网站",
+}
+
+def get_source_label(url: str) -> str:
+    for keyword, label in SOURCE_MAP.items():
+        if keyword in url:
+            return label
+    return "招标平台"
+
+def serper_search(query: str) -> list:
     results = []
     try:
-        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y:%m:%d")
-        today = datetime.now().strftime("%Y:%m:%d")
-        encoded_kw = requests.utils.quote(keyword)
-        url = (f"https://search.ccgp.gov.cn/bxsearch?searchtype=1&bidSort=0"
-               f"&kw={encoded_kw}&start_time={week_ago}&end_time={today}&timeType=6")
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.encoding = "utf-8"
-        soup = BeautifulSoup(resp.text, "lxml")
-        for item in soup.select("ul.vT-srch-result-list-bid li")[:10]:
-            title_el = item.select_one("a")
-            date_el = item.select_one("span.vT-srch-result-list-bid-time")
-            if title_el:
-                results.append({
-                    "title": title_el.get_text(strip=True),
-                    "url": title_el.get("href", ""),
-                    "date": date_el.get_text(strip=True) if date_el else "",
-                    "source": "中国政府采购网",
-                })
-        time.sleep(random.uniform(1.5, 3.0))
+        resp = requests.post(
+            "https://google.serper.dev/search",
+            headers={
+                "X-API-KEY": SERPER_API_KEY,
+                "Content-Type": "application/json",
+            },
+            json={
+                "q": query,
+                "gl": "cn",
+                "hl": "zh-cn",
+                "num": 10,
+                "tbs": "qdr:w",  # 只搜索最近一周
+            },
+            timeout=15,
+        )
+        data = resp.json()
+
+        for item in data.get("organic", []):
+            title = item.get("title", "").strip()
+            url = item.get("link", "")
+            snippet = item.get("snippet", "")
+            date = item.get("date", "")
+
+            # 过滤明显不相关的结果
+            keywords = ["招标", "采购", "法律", "法务", "顾问", "公告"]
+            if not any(k in title + snippet for k in keywords):
+                continue
+
+            results.append({
+                "title": title,
+                "url": url,
+                "date": date,
+                "snippet": snippet,
+                "source": get_source_label(url),
+            })
+
+        time.sleep(0.5)
+
     except Exception as e:
-        print(f"[CCGP] 搜索出错 [{keyword}]: {e}")
+        print(f"  [Serper] 搜索出错 [{query}]: {e}")
+
     return results
 
-def deduplicate(items):
+
+def deduplicate(items: list) -> list:
     seen, unique = set(), []
     for item in items:
-        if item["title"] not in seen:
-            seen.add(item["title"])
+        key = item["url"] or item["title"]
+        if key not in seen:
+            seen.add(key)
             unique.append(item)
     return unique
 
-def run_search():
+
+def run_search() -> list:
     all_results = []
-    for kw in KEYWORDS:
-        print(f"  → 搜索关键词: {kw}")
-        all_results.extend(search_ccgp(kw))
+    total = len(QUERIES)
+    for i, query in enumerate(QUERIES, 1):
+        print(f"  [{i}/{total}] 搜索: {query}")
+        results = serper_search(query)
+        print(f"         找到 {len(results)} 条")
+        all_results.extend(results)
+
     deduped = deduplicate(all_results)
-    print(f"搜索完成，去重后共 {len(deduped)} 条")
+    print(f"\n搜索完成，去重后共 {len(deduped)} 条")
     return deduped
