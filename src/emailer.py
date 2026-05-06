@@ -19,7 +19,7 @@ def send_email(tenders):
     target = os.environ["TARGET_EMAIL"]
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f'【医院法务招标周报】{datetime.now().strftime("%Y-%m-%d")}｜共{len(tenders)}条'
-    msg["From"] = f"招标监控 <{user}>"
+    msg["From"] = user
     msg["To"] = target
     msg.attach(MIMEText(build_html_report(tenders), "html", "utf-8"))
     with smtplib.SMTP_SSL("smtp.qq.com", 465) as server:
